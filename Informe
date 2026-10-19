@@ -1,0 +1,69 @@
+# LAB-01 — Protección y privacidad de datos - Informe Final
+
+## 19.1 Clasificación
+
+### Matriz de clasificación de datos
+| Campo | ¿Identifica directamente? | ¿Puede contribuir a identificar? | ¿Requiere protección? | Justificación |
+| :--- | :--- | :--- | :--- | :--- |
+| **id** | No | No | Sí | Es un identificador interno. Requiere protección de integridad para mantener las relaciones de la base de datos. |
+| **nombre** | Sí | No aplica | Sí | Identificador directo principal. Requiere alta confidencialidad. |
+| **correo** | Sí | No aplica | Sí | Identificador directo y medio de contacto personal. |
+| **telefono** | Sí | No aplica | Sí | Identificador directo y medio de contacto personal. |
+| **rfc** | Sí | No aplica | Sí | Identificador oficial, único y fiscal. Altamente sensible. |
+| **edad** | No | Sí | Sí | *Cuasi-identificador*. Por sí solo no identifica, pero sirve para acotar grupos. |
+| **ciudad** | No | Sí | Sí | *Cuasi-identificador* geográfico general. |
+| **codigo_postal** | No | Sí | Sí | *Cuasi-identificador* geográfico específico. Combinado con edad reduce drásticamente el grupo. |
+| **fecha_alta** | No | No | Sí | Metadato operativo. Requiere protección para auditorías y políticas de retención. |
+
+**Análisis:**
+Los datos que requieren mayor protección son `nombre`, `correo`, `telefono` y `rfc`, porque identifican directamente a una persona o permiten contactarla. El RFC merece cuidado especial por su carácter fiscal y su capacidad de vincular registros. `edad`, `ciudad` y `codigo_postal` son cuasi-identificadores: por separado quizá no identifiquen a alguien, pero al combinarse pueden reducir mucho el grupo de personas posibles. `id` es un identificador interno que permite enlazar registros dentro del sistema, y `fecha_alta` es un dato operativo que también podría ayudar a reconocer a una persona al cruzarse con otras fuentes.
+
+## 19.2 Enmascaramiento
+
+- **Qué se ocultó:** partes del correo, el teléfono y el RFC.
+- **Para quién:** para el personal de soporte, mediante el rol `soporte`.
+- **Por qué:** para que pueda atender consultas sin ver los valores completos de contacto e identificación fiscal (Principio de mínimo privilegio).
+- **Mecanismo utilizado:** una vista llamada `v_clientes_soporte` que muestra versiones parciales de esos datos. Se concede lectura sobre la vista y se busca impedir el acceso directo a la tabla original `clientes` mediante el comando `REVOKE`.
+
+## 19.3 Seudonimización
+
+- **Cómo se generaron los tokens:** con `gen_random_uuid()`, que genera un UUID único para cada cliente.
+- **Dónde se encuentra el mapa:** en la tabla `pii.mapa_cliente`, que relaciona el token con el identificador original.
+- **Quién debería poder acceder a él:** solo personal autorizado que necesite reidentificar registros por una finalidad aprobada; el rol `analista` no debe tener acceso al mapa.
+- **Por qué se separaron los permisos:** para que el área de analítica trabaje con tokens y atributos reducidos sin poder vincularlos directamente con la identidad original. Esto aplica el principio de mínimo privilegio y la separación de funciones.
+
+## 19.4 Anonimización
+
+- **Qué identificadores fueron eliminados:** la salida agregada no muestra nombre, correo, teléfono, RFC, identificador de cliente ni token.
+- **Qué atributos fueron generalizados:** la edad se agrupa en rangos (`18-30`, `31-45` y `46+`); el código postal se reduce a sus dos primeros caracteres (región).
+- **Qué grupos fueron suprimidos:** los que tienen menos de cinco registros (umbral *k=5*). Con los cinco datos de ejemplo, la combinación más grande contiene pocas filas, lo que demuestra cómo la regla protege las identidades en universos pequeños.
+- **Qué riesgo de reidentificación permanece:** el rango de edad y la región aún pueden combinarse con datos externos. También podrían influir otros atributos o fechas. El umbral `k=5` es didáctico y no garantiza por sí solo el anonimato completo frente al "efecto mosaico".
+
+## 19.5 Retención
+
+- **Qué criterio se utilizó:** identificar registros cuya `fecha_alta` sea anterior a la fecha actual menos cinco años (`INTERVAL '5 years'`). La consulta localiza candidatos y no ejecuta `DELETE` directamente.
+- **Qué información debería conservarse:** solo la necesaria para la finalidad del negocio y durante el plazo autorizado o requerido por la organización o por normativas legales.
+- **Qué información podría eliminarse:** los registros que hayan superado el periodo aprobado y ya no tengan una finalidad o necesidad vigente, después de revisar obligaciones y excepciones aplicables.
+- **Qué controles deberían existir antes de eliminarla:** una política de retención justificada, revisión y aprobación del responsable, respaldo verificado y protegido, ejecución controlada, registro de la decisión y un procedimiento de recuperación ante eliminación accidental.
+
+## 19.6 Conclusiones
+
+- **¿Qué técnica utilizarías para un área de soporte?** Enmascaramiento dinámico mediante una vista que exponga solo los campos necesarios, junto con permisos que impidan consultar directamente los datos originales.
+- **¿Qué técnica utilizarías para un área de analítica?** Seudonimización, sustituyendo la identidad directa por tokens y manteniendo el mapa de correspondencia estrictamente aislado y accesible solo a personal autorizado.
+- **¿Qué técnica utilizarías para publicar estadísticas?** Agregación, generalización de atributos (rangos) y supresión de grupos pequeños; evaluando siempre el riesgo residual de reidentificación antes de publicar.
+- **¿Por qué ninguna de estas técnicas sustituye al control de acceso?** Porque enmascarar o transformar la presentación no impide por sí mismo que una persona lea las tablas originales. Los permisos definen *quién* puede acceder a las estructuras de datos; las técnicas de privacidad controlan *qué* información se expone después del acceso autorizado.
+
+---
+
+## 20. Preguntas de reflexión
+
+1. **¿Cuál es la diferencia entre enmascaramiento y seudonimización?** El enmascaramiento oculta parte de un valor al mostrarlo (como censura visual). La seudonimización sustituye identificadores directos por tokens y conserva, de manera separada y protegida, un mapa que puede volver a vincularlos con la persona original.
+2. **¿Por qué la seudonimización no significa anonimización?** Porque existe un mapa o información adicional que permite revertir el proceso y asociar nuevamente el token con la identidad original de manera determinista.
+3. **¿Por qué eliminar `nombre` y `RFC` no garantiza que un conjunto de datos sea anónimo?** Porque otros datos demográficos como la edad, ubicación geográfica, fechas y sus combinaciones pueden distinguir a una persona, sobre todo al cruzarse con fuentes de datos externas o públicas.
+4. **¿Qué función tienen los cuasi-identificadores?** Son atributos que no identifican necesariamente por sí solos a un individuo, pero combinados actúan como filtros que pueden reducir el grupo de personas posibles hasta facilitar una reidentificación.
+5. **¿Por qué es importante separar el mapa de seudonimización?** Para limitar quién tiene el poder de relacionar los tokens con las identidades reales, reduciendo el impacto y el daño en caso de que el conjunto de datos analítico sufra una exposición no autorizada.
+6. **¿Qué principio de seguridad se aplica al impedir que el analista acceda al mapa?** El principio de mínimo privilegio (otorgar solo lo necesario para el análisis) y la separación de funciones (quien analiza los datos no es quien posee la llave para reidentificar).
+7. **¿Por qué una vista puede ser preferible a entregar acceso directo a la tabla?** Porque actúa como una capa de abstracción. Permite mostrar únicamente las columnas seleccionadas y aplicar transformaciones (como el enmascaramiento) al vuelo, otorgando permisos sobre esa presentación segura sin exponer toda la tabla original.
+8. **¿Qué diferencia existe entre proteger un dato para visualización y protegerlo contra acceso no autorizado?** El enmascaramiento cambia cómo se presenta el dato a nivel lógico o de interfaz; los permisos de acceso controlan quién puede leer físicamente la estructura que lo almacena. El enmascaramiento no reemplaza la autorización.
+9. **¿Por qué la retención forma parte de la protección de datos?** Porque conservar información más tiempo del necesario viola el principio de minimización, y prolonga injustificadamente su exposición a accesos indebidos, filtraciones o usos no previstos.
+10. **¿Qué riesgo existe si una organización conserva información indefinidamente?** Aumenta drásticamente el tiempo de exposición frente a ciberataques, incrementa el impacto potencial y legal de una filtración de datos, y facilita que la información se utilice para fines ajenos a los que justificaron su recolección original.
